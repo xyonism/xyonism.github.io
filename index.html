@@ -18,6 +18,8 @@
 			--sage: #5F6F4F;
 		}
 
+		
+
 		/* Geolocation search (OpenStreetMap / Nominatim) */
 		.geo-search {
 			margin: 18px 0 8px;
@@ -295,6 +297,7 @@
             }
         }
 
+
         canvas {
             position: absolute;
             inset: 0;
@@ -451,6 +454,35 @@
             }
         }
 
+		/* alert/toast for visible errors */
+		.app-alert {
+			position: fixed;
+			top: 14px;
+			left: 50%;
+			transform: translateX(-50%);
+			background: rgba(60,20,20,0.96);
+			color: #fff;
+			padding: 10px 14px;
+			border-radius: 8px;
+			box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+			z-index: 9999;
+			max-width: min(94vw, 640px);
+			font-size: 14px;
+			display: flex;
+			gap: 12px;
+			align-items: center;
+		}
+
+		.app-alert button.dismiss {
+			background: transparent;
+			border: 1px solid rgba(255,255,255,0.15);
+			color: #fff;
+			padding: 6px 8px;
+			border-radius: 6px;
+			cursor: pointer;
+			font-weight: 600;
+		}
+
     </style>
 </head>
 <body>
@@ -507,15 +539,94 @@
         </div>
     </div>
 
-    <footer>
-        Times use the GRA (Vilna Gaon) and MGA (Magen Avraham) shaa zmanit methods ✦
-        Alot Hashachar, Misheyakir, and Tzeit approximated by solar depression angle ✦
-        For halachic rulings, consult a local rabbinic authority.
-    </footer>
+	<footer>
+		Times use the GRA (Vilna Gaon) shaa zmanit method ✦
+		Alot Hashachar, Misheyakir, and Tzeit approximated by solar depression angle ✦
+		For halachic rulings, consult a local rabbinic authority.
+	</footer>
 
     <div class="frame-strip bottom"></div>
 
     <script>
+
+		// Resolve timezone for coordinates (try timeapi.io, fallback to approximate by longitude)
+		// Returns { utcOffset: number, tzName: string|undefined }
+		async function getTimezoneForCoords(lat, lng) {
+			var utcOffset, tzName;
+			try {
+				var url = 'https://timeapi.io/api/Time/current/coordinate?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lng);
+				var res = await fetch(url, {headers: {'Accept': 'application/json'}});
+				if (res.ok) {
+					var data = await res.json();
+					// timeapi.io returns utcOffset like "+02:00" and timeZone
+					if (data) {
+						if (data.utcOffset) {
+							// parse "+HH:MM" or "-HH:MM"
+							var m = String(data.utcOffset).match(/([+-]?)(\d{1,2}):(\d{2})/);
+							if (m) {
+								var sign = m[1] === '-' ? -1 : 1;
+								var hh = parseInt(m[2], 10);
+								var mm = parseInt(m[3], 10);
+								utcOffset = sign * (hh + mm / 60);
+							} else {
+								var n = parseFloat(data.utcOffset);
+								if (!isNaN(n)) utcOffset = n;
+							}
+						}
+						if (data.timeZone) tzName = data.timeZone;
+						return { utcOffset: utcOffset, tzName: tzName };
+					}
+				}
+			} catch (e) {
+				// notify user that timezone lookup failed and fallback will be used
+				try { showAlert('Timezone lookup failed, using approximate offset'); } catch (er) { }
+			}
+			// fallback: approximate timezone by longitude (hours)
+			var approx = Math.round(lng / 15);
+			utcOffset = approx;
+			return { utcOffset: utcOffset, tzName: undefined };
+		}
+
+		function formatOffset(offset) {
+			if (offset === undefined || offset === null) return '';
+			var sign = offset >= 0 ? '+' : '-';
+			var absv = Math.abs(offset);
+			var hh = Math.floor(absv);
+			var mm = Math.round((absv - hh) * 60);
+			return sign + String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+		}
+
+		// Visible alert/toast for errors
+		function showAlert(msg, timeoutMs) {
+			try {
+				var existing = document.getElementById('appAlert');
+				if (existing) {
+					existing.parentNode.removeChild(existing);
+				}
+				var div = document.createElement('div');
+				div.id = 'appAlert';
+				div.className = 'app-alert';
+				var span = document.createElement('div');
+				span.style.flex = '1';
+				span.textContent = msg;
+				var btn = document.createElement('button');
+				btn.className = 'dismiss';
+				btn.textContent = 'Dismiss';
+				btn.addEventListener('click', function () { try { div.parentNode.removeChild(div); } catch (e) {} });
+				div.appendChild(span);
+				div.appendChild(btn);
+				document.body.appendChild(div);
+				if (!timeoutMs) timeoutMs = 6000;
+				setTimeout(function () { try { if (div.parentNode) div.parentNode.removeChild(div); } catch (e) {} }, timeoutMs);
+			} catch (e) {
+				// last resort
+				try { alert(msg); } catch (ex) {}
+			}
+		}
+
+		// Global handlers to surface uncaught errors
+		window.addEventListener('error', function (ev) { try { showAlert('Error: ' + (ev && ev.message ? ev.message : String(ev))); } catch (e) {} });
+		window.addEventListener('unhandledrejection', function (ev) { try { var r = ev && ev.reason ? ev.reason : ev; var m = r && r.message ? r.message : String(r); showAlert('Unhandled rejection: ' + m); } catch (e) {} });
         (function () {
             "use strict";
 
@@ -551,50 +662,79 @@
                 var UT = ((T - lngHour) % 24 + 24) % 24;
                 var local = ((UT + utcOffsetHours) % 24 + 24) % 24;
 
-                var hh = Math.floor(local);
-                var rem = (local - hh) * 60;
-                var mm = Math.floor(rem);
-                var ss = Math.round((rem - mm) * 60);
-                return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hh, mm, ss);
+				var hh = Math.floor(local);
+				var rem = (local - hh) * 60;
+				var mm = Math.floor(rem);
+				var ss = Math.round((rem - mm) * 60);
+				// Build a Date representing the correct absolute instant for the
+				// target-local time. The computed `hh:mm:ss` are local in the
+				// target timezone; to get the UTC instant we subtract the
+				// target utcOffsetHours and create a UTC-based timestamp.
+				return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), hh - utcOffsetHours, mm, ss));
             }
 
             function addMinutes(d, mins) {return new Date(d.getTime() + mins * 60000);}
 
+			// Get numeric utc offset (hours) for a specific IANA timezone at a given instant.
+			// Returns a number like -5 or +2. This handles DST differences for the selected date.
+			function getOffsetHoursForDate(tzName, date) {
+				try {
+					var fmt = new Intl.DateTimeFormat('en-US', {
+						timeZone: tzName,
+						year: 'numeric', month: '2-digit', day: '2-digit',
+						hour: '2-digit', minute: '2-digit', second: '2-digit',
+						hour12: false
+					});
+					var parts = fmt.formatToParts(date);
+					var map = {};
+					parts.forEach(function (p) { if (p.type !== 'literal') map[p.type] = p.value; });
+					var y = parseInt(map.year, 10);
+					var mo = parseInt(map.month, 10) - 1;
+					var da = parseInt(map.day, 10);
+					var hh = parseInt(map.hour, 10);
+					var mm = parseInt(map.minute, 10);
+					var ss = parseInt(map.second, 10);
+					var localAsUtc = Date.UTC(y, mo, da, hh, mm, ss);
+					var offsetHours = (localAsUtc - date.getTime()) / 3600000;
+					// round to nearest minute precision
+					return Math.round(offsetHours * 100) / 100;
+				} catch (e) {
+					return undefined;
+				}
+			}
+
             function computeZemanim(date, lat, lng, utcOffset) {
-                var netz = solarEvent(date, lat, lng, utcOffset, 90.833, true);
-                var shkiah = solarEvent(date, lat, lng, utcOffset, 90.833, false);
-                var alot = solarEvent(date, lat, lng, utcOffset, 106.1, true);
-                var tzeit = solarEvent(date, lat, lng, utcOffset, 98.5, false);
+				var netz = solarEvent(date, lat, lng, utcOffset, 90.833, true);
+				var shkiah = solarEvent(date, lat, lng, utcOffset, 90.833, false);
+				var alot = solarEvent(date, lat, lng, utcOffset, 106.1, true);
+				var tzeit = solarEvent(date, lat, lng, utcOffset, 98.5, false);
 
-                if (!netz || !shkiah) {return null;}
+				if (!netz || !shkiah) { return null; }
 
-                var shaaZmanit = (shkiah - netz) / 12;
-                var shaaZmanitMga = (tzeit - alot) / 12;
+				// Use GRA (Vilna Gaon) sha'ah zmanit: daytime divided into 12 equal parts
+				var shaaZmanit = (shkiah - netz) / 12;
 
-                var chatzot = new Date(netz.getTime() + 6 * shaaZmanit);
-                var chatzotLayla = addMinutes(chatzot, 12 * 60);
+				var chatzot = new Date(netz.getTime() + 6 * shaaZmanit);
+				var chatzotLayla = addMinutes(chatzot, 12 * 60);
 
-                return [
-                    {key: 'chatzotLayla', name: 'Midnight', heb: 'חֲצוֹת הַלַּיְלָה', time: chatzotLayla},
-                    {key: 'alot', name: 'Dawn', heb: 'עֲלוֹת הַשַּׁחַר', time: alot},
-                    {key: 'misheyakir', name: 'Misheyakir', heb: 'מִשֶּׁיַּכִּיר', time: solarEvent(date, lat, lng, utcOffset, 101.0, true)},
-                    {key: 'netz', name: 'Sunrise', heb: 'הָנֵץ הַחַמָּה', time: netz},
-                    {key: 'shemaMga', name: 'Latest Shema (MGA)', heb: 'ק״ש (מ״א)', time: new Date(alot.getTime() + 3 * shaaZmanitMga)},
-                    {key: 'shema', name: 'Latest Shema', heb: 'סוֹף זְמַן ק״ש', time: new Date(netz.getTime() + 3 * shaaZmanit)},
-                    {key: 'tefilahMga', name: 'Latest Amidah (MGA)', heb: 'תְּפִלָּה (מ״א)', time: new Date(alot.getTime() + 4 * shaaZmanitMga)},
-                    {key: 'tefilah', name: 'Latest Amidah', heb: 'סוֹף זְמַן תְּפִלָּה', time: new Date(netz.getTime() + 4 * shaaZmanit)},
-                    {key: 'chatzot', name: 'Midday', heb: 'חֲצוֹת הַיּוֹם', time: chatzot},
-                    {key: 'mga', name: 'Early Mincha', heb: 'מִנְחָה גְּדוֹלָה', time: new Date(netz.getTime() + 6.5 * shaaZmanit)},
-                    {key: 'mka', name: 'Mincha Ketana', heb: 'מִנְחָה קְטַנָּה', time: new Date(netz.getTime() + 9.5 * shaaZmanit)},
-                    {key: 'plagMga', name: 'Plag HaMincha (MGA)', heb: 'פְּלַג (מ״א)', time: new Date(alot.getTime() + 10.75 * shaaZmanitMga)},
-                    {key: 'plag', name: 'Plag HaMincha', heb: 'פְּלַג הַמִּנְחָה', time: new Date(netz.getTime() + 10.75 * shaaZmanit)},
-                    {key: 'candleLighting', name: 'Candle Lighting', heb: 'הַדְלָקַת נֵרוֹת', time: addMinutes(shkiah, -18)},
-                    {key: 'shkiah', name: 'Sunset', heb: 'שְׁקִיעַת הַחַמָּה', time: shkiah},
+				return [
+					{key: 'chatzotLayla', name: 'Midnight', heb: 'חֲצוֹת הַלַּיְלָה', time: chatzotLayla},
+					{key: 'alot', name: 'Dawn', heb: 'עֲלוֹת הַשַּׁחַר', time: alot},
+					{key: 'misheyakir', name: 'Misheyakir', heb: 'מִשֶּׁיַּכִּיר', time: solarEvent(date, lat, lng, utcOffset, 101.0, true)},
+					{key: 'netz', name: 'Sunrise', heb: 'הָנֵץ הַחַמָּה', time: netz},
+					{key: 'shema', name: 'Latest Shema', heb: 'סוֹף זְמַן ק״ש', time: new Date(netz.getTime() + 3 * shaaZmanit)},
+					{key: 'tefilah', name: 'Latest Amidah', heb: 'סוֹף זְמַן תְּפִלָּה', time: new Date(netz.getTime() + 4 * shaaZmanit)},
+					{key: 'chatzot', name: 'Midday', heb: 'חֲצוֹת הַיּוֹם', time: chatzot},
+					{key: 'earlyMincha', name: 'Early Mincha', heb: 'מִנְחָה גְּדוֹלָה', time: new Date(netz.getTime() + 6.5 * shaaZmanit)},
+					{key: 'mka', name: 'Mincha Ketana', heb: 'מִנְחָה קְטַנָּה', time: new Date(netz.getTime() + 9.5 * shaaZmanit)},
+					{key: 'plag', name: 'Plag HaMincha', heb: 'פְּלַג הַמִּנְחָה', time: new Date(netz.getTime() + 10.75 * shaaZmanit)},
+					{key: 'candleLighting', name: 'Candle Lighting', heb: 'הַדְלָקַת נֵרוֹת', time: addMinutes(shkiah, -18)},
+					{key: 'shkiah', name: 'Sunset', heb: 'שְׁקִיעַת הַחַמָּה', time: shkiah},
 					{key: 'tzeit1', name: 'Nightfall', heb: 'צֵאת הַכּוֹכָבִים', time: addMinutes(shkiah, + 22)},
-                    {key: 'tzeit', name: 'Nightfall (Kaballah)', heb: 'צֵאת הַכּוֹכָבִים (מקובלים)', time: tzeit},
-                    {key: 'tzeitRT', name: 'Nightfall (R״T)', heb: 'צֵאת ר״ת', time: addMinutes(shkiah, 72)}
-                ];
-            }
+					{key: 'tzeit', name: 'Nightfall (Kaballah)', heb: 'צֵאת הַכּוֹכָבִים (מקובלים)', time: tzeit},
+					{key: 'tzeitRT', name: 'Nightfall (R״T)', heb: 'צֵאת ר״ת', time: addMinutes(shkiah, 72)}
+				];
+			}
 
 			// Convert integer to Hebrew gematria letters (common rabbinic style)
 			function numToHeb(n) {
@@ -649,10 +789,17 @@
 
             var current = {zemanim: null, lat: 31.7683, lng: 35.2137, label: 'Jerusalem (default)'};
 
-            function angleForTime(d) {
-                var hrs = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
-                return (hrs / 24) * Math.PI * 2 - Math.PI / 2;
-            }
+			function angleForTime(d) {
+				// Compute the hour-of-day in the TARGET location for the UTC instant `d`.
+				// Use the selected location's utcOffset when available; otherwise fall
+				// back to the device timezone offset.
+				var targetOffset = (current && typeof current.utcOffset === 'number') ? current.utcOffset : - (new Date()).getTimezoneOffset() / 60;
+				// getUTC* gives the absolute instant components, add targetOffset hours
+				var hrs = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600 + targetOffset;
+				// normalize to 0-24
+				hrs = ((hrs % 24) + 24) % 24;
+				return (hrs / 24) * Math.PI * 2 - Math.PI / 2;
+			}
 
             function resizeCanvas() {
                 var size = stage.clientWidth;
@@ -662,21 +809,36 @@
                 draw();
             }
 
-            function fmtTime(d) {
-                if (!d) return '--:--';
-                var h = d.getHours(), m = d.getMinutes();
-                var ampm = h < 12 ? 'AM' : 'PM';
-                var h12 = h % 12; if (h12 === 0) h12 = 12;
-                return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
-            }
+			function fmtTime(d) {
+				if (!d) return '--:--';
+				// Prefer using IANA timezone name when available and render in 24-hour format.
+				try {
+					if (current && current.tzName) {
+						return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false, timeZone: current.tzName});
+					}
+				} catch (e) {
+					// ignore and fall through to offset-based formatting
+				}
+				// Fallback: use the stored UTC instant and derive target-local HH:MM
+				var targetOffset = (current && typeof current.utcOffset === 'number') ? current.utcOffset : - (new Date()).getTimezoneOffset() / 60;
+				var utcH = d.getUTCHours();
+				var utcM = d.getUTCMinutes();
+				var hh = (Math.floor((utcH + targetOffset) % 24) + 24) % 24;
+				var mm = utcM;
+				return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+			}
 
-            function drawZmanRays(cx, cy, R) {
+			function drawZmanRays(cx, cy, R) {
                 if (!current.zemanim) return;
 			var now;
 			if (current.dateStr) {
-				// Use midday of the selected date to avoid timezone/daylight issues
+				// Use midday of the selected date to avoid timezone/daylight issues.
+				// Construct the absolute instant corresponding to 12:00 in the target
+				// location by creating a UTC timestamp offset by the target utcOffset.
 				var parts = current.dateStr.split('-');
-				now = new Date(parseInt(parts[0],10), parseInt(parts[1],10) - 1, parseInt(parts[2],10), 12, 0, 0);
+				var y = parseInt(parts[0], 10), mo = parseInt(parts[1], 10) - 1, da = parseInt(parts[2], 10);
+				var off = (typeof current.utcOffset === 'number') ? current.utcOffset : - (new Date()).getTimezoneOffset() / 60;
+				now = new Date(Date.UTC(y, mo, da, 12 - off, 0, 0));
 			} else {
 				now = new Date();
 			}
@@ -872,12 +1034,14 @@
 				// Use selected date for list-relative "now" marker when a date is chosen,
 				// otherwise use the real current time.
 				var now;
-				if (current.dateStr) {
-					var p = current.dateStr.split('-');
-					now = new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10), 12, 0, 0);
-				} else {
-					now = new Date();
-				}
+			if (current.dateStr) {
+				var p = current.dateStr.split('-');
+				var y = parseInt(p[0],10), mo = parseInt(p[1],10)-1, da = parseInt(p[2],10);
+				var off = (typeof current.utcOffset === 'number') ? current.utcOffset : - (new Date()).getTimezoneOffset() / 60;
+				now = new Date(Date.UTC(y, mo, da, 12 - off, 0, 0));
+			} else {
+				now = new Date();
+			}
                 current.zemanim.forEach(function (z) {
                     var li = document.createElement('li');
                     if (Math.abs(now - z.time) < 60000) li.classList.add('now');
@@ -892,8 +1056,7 @@
 
             function tick() {
                 var d = new Date();
-                document.getElementById('clockTime').textContent =
-                    d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+				document.getElementById('clockTime').textContent = fmtTime(d);
                 draw();
             }
 
@@ -902,21 +1065,72 @@
 				var now;
 				if (current.dateStr) {
 					var parts = current.dateStr.split('-');
+					// build a local-midday instant (we'll convert to target-zone instant shortly)
 					now = new Date(parseInt(parts[0],10), parseInt(parts[1],10) - 1, parseInt(parts[2],10), 12, 0, 0);
 				} else {
 					now = new Date();
 				}
-				var utcOffset = -now.getTimezoneOffset() / 60;
-				current.zemanim = computeZemanim(now, current.lat, current.lng, utcOffset);
-				document.getElementById('locLabel').textContent = current.label;
-				// Gregorian date (normal Western numerals)
-				document.getElementById('dateLine').textContent =
-					now.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
+				// Compute the correct utcOffset for the target LOCATION at this date (handles DST)
+				var utcOffsetForDate;
+				if (current.tzName) {
+					var off = getOffsetHoursForDate(current.tzName, now);
+					if (typeof off === 'number') utcOffsetForDate = off;
+				}
+				if (utcOffsetForDate === undefined) {
+					// fallback to stored numeric offset or device offset
+					if (typeof current.utcOffset === 'number') utcOffsetForDate = current.utcOffset;
+					else utcOffsetForDate = -now.getTimezoneOffset() / 60;
+				}
+				current.zemanim = computeZemanim(now, current.lat, current.lng, utcOffsetForDate);
+				// show label with timezone if available; use the date-specific offset for display
+				var tzSuffix = '';
+				if (current.tzName) tzSuffix = ' · ' + current.tzName;
+				if (typeof utcOffsetForDate === 'number') tzSuffix += ' · UTC' + formatOffset(utcOffsetForDate);
+				document.getElementById('locLabel').textContent = current.label + tzSuffix;
+				// Determine a display 'now' that represents the correct absolute instant
+				// for the selected location (either midday on selected date, or the
+				// current instant). Use this for date formatting in the target zone.
+				var displayNow;
+				if (current.dateStr) {
+					var parts = current.dateStr.split('-');
+					var y = parseInt(parts[0],10), mo = parseInt(parts[1],10)-1, da = parseInt(parts[2],10);
+					var off = (typeof current.utcOffset === 'number') ? current.utcOffset : - (new Date()).getTimezoneOffset() / 60;
+					displayNow = new Date(Date.UTC(y, mo, da, 12 - off, 0, 0));
+				} else {
+					displayNow = new Date();
+				}
+
+				// Format Gregorian date in the target location. Prefer to use IANA
+				// tzName when available; otherwise approximate by applying utcOffset.
+				var targetOffsetForFormatting = (typeof current.utcOffset === 'number') ? current.utcOffset : - (new Date()).getTimezoneOffset() / 60;
+				var dateForFormatting = displayNow;
+				if (!current.tzName) {
+					var deviceOffset = - (new Date()).getTimezoneOffset() / 60;
+					var deltaMs = (targetOffsetForFormatting - deviceOffset) * 3600000;
+					dateForFormatting = new Date(displayNow.getTime() + deltaMs);
+				}
+				try {
+					if (current.tzName) {
+						document.getElementById('dateLine').textContent = displayNow.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: current.tzName});
+					} else {
+						document.getElementById('dateLine').textContent = dateForFormatting.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
+					}
+				} catch (e) {
+					document.getElementById('dateLine').textContent = '';
+				}
+
 				// Hebrew calendar date using gematria for numbers (Intl for month/weekday)
 				try {
-					var dayNum = parseInt(new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {day: 'numeric'}).format(now), 10);
-					var monthName = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {month: 'long'}).format(now);
-					var yearNum = parseInt(new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {year: 'numeric'}).format(now), 10);
+					var dayNum, monthName, yearNum;
+					if (current.tzName) {
+						dayNum = parseInt(new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {day: 'numeric', timeZone: current.tzName}).format(displayNow), 10);
+						monthName = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {month: 'long', timeZone: current.tzName}).format(displayNow);
+						yearNum = parseInt(new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {year: 'numeric', timeZone: current.tzName}).format(displayNow), 10);
+					} else {
+						dayNum = parseInt(new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {day: 'numeric'}).format(dateForFormatting), 10);
+						monthName = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {month: 'long'}).format(dateForFormatting);
+						yearNum = parseInt(new Intl.DateTimeFormat('he-IL-u-ca-hebrew', {year: 'numeric'}).format(dateForFormatting), 10);
+					}
 					var shortYear = yearNum >= 5000 ? yearNum - 5000 : yearNum;
 					var dayHeb = numToHeb(dayNum);
 					var yearHeb = numToHeb(shortYear);
@@ -935,17 +1149,26 @@
                     return;
                 }
                 statusBtn.textContent = 'Locating…';
-                navigator.geolocation.getCurrentPosition(function (pos) {
-                    current.lat = pos.coords.latitude;
-                    current.lng = pos.coords.longitude;
-                    current.label = 'Your location · ' + current.lat.toFixed(2) + ', ' + current.lng.toFixed(2);
-                    statusBtn.textContent = 'Use my location again';
-                    recompute();
-                }, function (err) {
-                    current.label = 'Jerusalem (location unavailable)';
-                    statusBtn.textContent = 'Try location again';
-                    recompute();
-                }, {enableHighAccuracy: true, timeout: 8000});
+				navigator.geolocation.getCurrentPosition(function (pos) {
+					current.lat = pos.coords.latitude;
+					current.lng = pos.coords.longitude;
+					current.label = 'Your location · ' + current.lat.toFixed(2) + ', ' + current.lng.toFixed(2);
+					statusBtn.textContent = 'Use my location again';
+					// resolve timezone for device coords, then recompute
+				(async function () {
+					try {
+						var tz = await getTimezoneForCoords(current.lat, current.lng);
+						if (tz && typeof tz.utcOffset === 'number') current.utcOffset = tz.utcOffset;
+						if (tz && tz.tzName) current.tzName = tz.tzName;
+					} catch (e) { try { showAlert('Timezone lookup failed'); } catch (er) {} }
+					recompute();
+				})();
+				}, function (err) {
+					current.label = 'Jerusalem (location unavailable)';
+					statusBtn.textContent = 'Try location again';
+					try { showAlert('Geolocation error: ' + (err && err.message ? err.message : err.code || 'unknown')); } catch (er) { }
+					recompute();
+				}, {enableHighAccuracy: true, timeout: 8000});
             }
 
 			// OpenStreetMap / Nominatim geocoding
@@ -958,9 +1181,10 @@
 					if (!res.ok) throw new Error('Geocoding failed');
 					var data = await res.json();
 					renderSearchResults(data || []);
-				} catch (e) {
-					out.innerHTML = '<li>Search failed</li>';
-				}
+		} catch (e) {
+			out.innerHTML = '<li>Search failed</li>';
+			try { showAlert('Search failed: ' + (e && e.message ? e.message : 'network error')); } catch (er) { }
+		}
 			}
 
 			function renderSearchResults(items) {
@@ -984,7 +1208,15 @@
 				current.lat = parseFloat(item.lat);
 				current.lng = parseFloat(item.lon);
 				current.label = item.display_name;
-				recompute();
+				// try to resolve timezone for these coords, then recompute
+				(async function () {
+					try {
+						var tz = await getTimezoneForCoords(current.lat, current.lng);
+						if (tz && typeof tz.utcOffset === 'number') current.utcOffset = tz.utcOffset;
+						if (tz && tz.tzName) current.tzName = tz.tzName;
+					} catch (e) { try { showAlert('Timezone lookup failed'); } catch (er) {} }
+					recompute();
+				})();
 				// clear results
 				document.getElementById('geoResults').innerHTML = '';
 				// scroll dial center
