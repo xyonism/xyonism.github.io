@@ -499,7 +499,11 @@
         </svg>
         <h1>Zemanim Astrolabe</h1>
         <div class="heb-title" dir="rtl" lang="he">אִצְטַרְלָב הַזְּמַנִּים</div>
-        <div class="date-line" id="dateLine"></div>
+		<div class="date-line" id="dateLine">
+			<span id="dateText"></span>
+			<span id="timeText" style="margin-left:12px; font-weight:600;"></span>
+			<div id="locText" style="margin-top:6px; font-size:13px; color:#C9BD9C;"></div>
+		</div>
 		<div class="date-line heb-date" id="hebDateLine" dir="rtl" lang="he"></div>
     </header>
 
@@ -510,8 +514,8 @@
             <canvas id="dial"></canvas>
             <div id="labels"></div>
             <div id="center-readout">
-                <div class="clock-time" id="clockTime">--:--</div>
-                <div class="clock-sub" id="locLabel">locating…</div>
+				<div class="clock-time" id="clockTime"></div>
+				<div class="clock-sub" id="locLabel"></div>
             </div>
         </div>
     </div>
@@ -1054,11 +1058,12 @@
                 });
             }
 
-            function tick() {
-                var d = new Date();
-				document.getElementById('clockTime').textContent = fmtTime(d);
-                draw();
-            }
+		function tick() {
+			var d = new Date();
+			var clockEl = document.getElementById('clockTime');
+			if (clockEl) clockEl.textContent = fmtTime(d);
+			draw();
+		}
 
 			function recompute() {
 				// Determine which date to use for calculations: selected date (midday) or now
@@ -1086,7 +1091,6 @@
 				var tzSuffix = '';
 				if (current.tzName) tzSuffix = ' · ' + current.tzName;
 				if (typeof utcOffsetForDate === 'number') tzSuffix += ' · UTC' + formatOffset(utcOffsetForDate);
-				document.getElementById('locLabel').textContent = current.label + tzSuffix;
 				// Determine a display 'now' that represents the correct absolute instant
 				// for the selected location (either midday on selected date, or the
 				// current instant). Use this for date formatting in the target zone.
@@ -1109,14 +1113,16 @@
 					var deltaMs = (targetOffsetForFormatting - deviceOffset) * 3600000;
 					dateForFormatting = new Date(displayNow.getTime() + deltaMs);
 				}
+
+				// Update header Gregorian date (visible outside the clock)
 				try {
 					if (current.tzName) {
-						document.getElementById('dateLine').textContent = displayNow.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: current.tzName});
+						document.getElementById('dateText').textContent = displayNow.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: current.tzName});
 					} else {
-						document.getElementById('dateLine').textContent = dateForFormatting.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
+						document.getElementById('dateText').textContent = dateForFormatting.toLocaleDateString([], {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
 					}
 				} catch (e) {
-					document.getElementById('dateLine').textContent = '';
+					var dt = document.getElementById('dateText'); if (dt) dt.textContent = '';
 				}
 
 				// Hebrew calendar date using gematria for numbers (Intl for month/weekday)
@@ -1134,11 +1140,22 @@
 					var shortYear = yearNum >= 5000 ? yearNum - 5000 : yearNum;
 					var dayHeb = numToHeb(dayNum);
 					var yearHeb = numToHeb(shortYear);
-					document.getElementById('hebDateLine').textContent = dayHeb + ' ' + monthName + ' ' + yearHeb;
-				} catch (e) {
-					document.getElementById('hebDateLine').textContent = '';
-				}
-                draw();
+					var hebEl = document.getElementById('hebDateLine'); if (hebEl) hebEl.textContent = dayHeb + ' ' + monthName + ' ' + yearHeb;
+				} catch (e) { var hebEl = document.getElementById('hebDateLine'); if (hebEl) hebEl.textContent = ''; }
+
+				// Update the header location text
+				try {
+					var headerLoc = document.getElementById('locText');
+					if (headerLoc) headerLoc.textContent = current.label + (current.tzName ? ' · ' + current.tzName : '') + (typeof utcOffsetForDate === 'number' ? ' · UTC' + formatOffset(utcOffsetForDate) : '');
+				} catch (e) {}
+
+				// Update the time inside the center of the clock (only the time)
+				try {
+					var nowInstant = new Date();
+					var clockEl = document.getElementById('clockTime');
+					if (clockEl) clockEl.textContent = fmtTime(nowInstant);
+				} catch (e) { }
+				draw();
             }
 
             function locate() {
