@@ -1081,12 +1081,16 @@
 					var off = getOffsetHoursForDate(current.tzName, now);
 					if (typeof off === 'number') utcOffsetForDate = off;
 				}
-				if (utcOffsetForDate === undefined) {
-					// fallback to stored numeric offset or device offset
-					if (typeof current.utcOffset === 'number') utcOffsetForDate = current.utcOffset;
-					else utcOffsetForDate = -now.getTimezoneOffset() / 60;
-				}
-				current.zemanim = computeZemanim(now, current.lat, current.lng, utcOffsetForDate);
+			if (utcOffsetForDate === undefined) {
+				// fallback to stored numeric offset or device offset
+				if (typeof current.utcOffset === 'number') utcOffsetForDate = current.utcOffset;
+				else utcOffsetForDate = -now.getTimezoneOffset() / 60;
+			}
+			// persist the resolved numeric offset on the current context so
+			// other routines (angleForTime / fmtTime) use the correct timezone
+			// when drawing labels and the clock hand immediately after recompute
+			current.utcOffset = utcOffsetForDate;
+			current.zemanim = computeZemanim(now, current.lat, current.lng, utcOffsetForDate);
 				// show label with timezone if available; use the date-specific offset for display
 				var tzSuffix = '';
 				if (current.tzName) tzSuffix = ' · ' + current.tzName;
